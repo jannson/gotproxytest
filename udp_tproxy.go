@@ -1,9 +1,12 @@
 package main
 
 import (
+	//"bytes"
+	//"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
+	//"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
@@ -92,6 +95,33 @@ func IPv6UdpAddrToUnixSocksAddr(addr string) (sa unix.Sockaddr, err error) {
 		return nil, err
 	}
 	return ipToSocksAddr(unix.AF_INET6, tcpAddr.IP, tcpAddr.Port, tcpAddr.Zone)
+}
+
+//Copy from golang source
+func anyToSockaddr(rsa *syscall.RawSockaddrAny) (syscall.Sockaddr, error) {
+	switch rsa.Addr.Family {
+	case syscall.AF_INET:
+		pp := (*syscall.RawSockaddrInet4)(unsafe.Pointer(rsa))
+		sa := new(syscall.SockaddrInet4)
+		p := (*[2]byte)(unsafe.Pointer(&pp.Port))
+		sa.Port = int(p[0])<<8 + int(p[1])
+		for i := 0; i < len(sa.Addr); i++ {
+			sa.Addr[i] = pp.Addr[i]
+		}
+		return sa, nil
+
+	case syscall.AF_INET6:
+		pp := (*syscall.RawSockaddrInet6)(unsafe.Pointer(rsa))
+		sa := new(syscall.SockaddrInet6)
+		p := (*[2]byte)(unsafe.Pointer(&pp.Port))
+		sa.Port = int(p[0])<<8 + int(p[1])
+		sa.ZoneId = pp.Scope_id
+		for i := 0; i < len(sa.Addr); i++ {
+			sa.Addr[i] = pp.Addr[i]
+		}
+		return sa, nil
+	}
+	return nil, syscall.EAFNOSUPPORT
 }
 
 // TcpListen is listening for incoming IP packets which are being intercepted.
@@ -202,8 +232,25 @@ func UdpTProxyConn(listenAddr string) (udp *net.UDPConn, err error) {
 	if err != nil {
 		return nil, err
 	}
+	//Why close here ???
 	defer unix.Close(s)
+
+	err = unix.SetsockoptInt(s, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unix.SetsockoptInt(s, unix.SOL_SOCKET, unix.SO_BROADCAST, 1)
+	if err != nil {
+		return nil, err
+	}
+
 	err = unix.SetsockoptInt(s, unix.SOL_IP, unix.IP_TRANSPARENT, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unix.SetsockoptInt(s, unix.IPPROTO_IP, unix.IP_RECVORIGDSTADDR, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -256,36 +303,55 @@ func main() {
 
 	for {
 
-		var hdr syscall.Msghdr
-		var unixAddr unix.Sockaddr
-		hdr.Namelen = uint32(unsafe.Sizeof(unixAddr))
-		hdr.Name = (*byte)(unsafe.Pointer(&unixAddr))
-		hdr.Control = (*byte)(unsafe.Pointer(&ctl))
-		hdr.Controllen = uint32(len(ctl))
-		hdr.Iovlen = 2
-		hdr.Iov = (*syscall.Iovec)(unsafe.Pointer(&[2]syscall.Iovec{}))
+		/*
+			var hdr syscall.Msghdr
+			var unixAddr unix.Sockaddr
+			hdr.Namelen = uint32(unsafe.Sizeof(unixAddr))
+			hdr.Name = (*byte)(unsafe.Pointer(&unixAddr))
+			hdr.Control = (*byte)(unsafe.Pointer(&ctl))
+			hdr.Controllen = uint32(len(ctl))
+			hdr.Iovlen = 2
+			hdr.Iov = (*syscall.Iovec)(unsafe.Pointer(&[2]syscall.Iovec{}))
+		*/
 		//http://grokbase.com/t/gg/golang-nuts/13aprnjk7m/go-nuts-how-to-get-memory-from-c-and-cast-to-byte
-		oop := ((*[1 << 30]byte)(unsafe.Pointer(&hdr)))[0:unsafe.Sizeof(hdr)]
+		//oop := ((*[1 << 30]byte)(unsafe.Pointer(&hdr)))[0:unsafe.Sizeof(hdr)]
 
-		n, oobn, flags, addr, err := tproxyUdp.ReadMsgUDP(b1, oop)
+		//TODO check source hear src/syscall/syscall_linux.go from Golang source
+
+		n, oobn, flags, addr, err := tproxyUdp.ReadMsgUDP(b1, ctl)
 		if err != nil {
 			fmt.Println("ReadMsgUDP err=", err)
 			return
 		}
 
-		fmt.Println(" result ", n, oobn, flags, addr, err, unixAddr, hdr.Controllen)
+		fmt.Println(" result ", n, oobn, flags, addr)
 
 		//TODO why the oobn is 0???
 
 		//http://lxr.free-electrons.com/source/include/linux/socket.h#L102
-		ctrlMsgs, err := syscall.ParseSocketControlMessage(ctl[:hdr.Controllen])
+		ctrlMsgs, err := syscall.ParseSocketControlMessage(ctl[:oobn])
 		if err != nil {
 			fmt.Println("ParseSocketControlMessage err=", err)
 			return
 		}
 
+		//var rsa syscall.RawSockaddrAny
+		//var inet4 syscall.RawSockaddrInet4
 		for _, msg := range ctrlMsgs {
-			fmt.Println("msg=", msg)
+			if msg.Header.Level == syscall.SOL_IP && msg.Header.Type == syscall.IP_RECVORIGDSTADDR {
+				//bf := bytes.NewBuffer(msg.Data)
+				//binary.Read(bf, binary.BigEndian, &rsa.Addr)
+				//rsa.Addr.Family = syscall.AF_INET
+				//binary.Read(bf, binary.BigEndian, &inet4)
+
+				//fmt.Println("inet4=", inet4.Addr, inet4.Port)
+
+				//little endian in my arm router
+				port := (int(msg.Data[2])<<8 + int(msg.Data[3]))
+				udpAddr := &net.UDPAddr{IP: net.IPv4(msg.Data[4], msg.Data[5], msg.Data[6], msg.Data[7]), Port: port}
+				fmt.Println("udpAddr=", udpAddr)
+			}
+			//fmt.Println("msg=", msg)
 		}
 	}
 }
