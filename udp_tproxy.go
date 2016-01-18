@@ -316,7 +316,7 @@ func main() {
 		//http://grokbase.com/t/gg/golang-nuts/13aprnjk7m/go-nuts-how-to-get-memory-from-c-and-cast-to-byte
 		//oop := ((*[1 << 30]byte)(unsafe.Pointer(&hdr)))[0:unsafe.Sizeof(hdr)]
 
-		//TODO check source hear src/syscall/syscall_linux.go from Golang source
+		//TODO check source here src/syscall/syscall_linux.go from Golang source
 
 		n, oobn, flags, addr, err := tproxyUdp.ReadMsgUDP(b1, ctl)
 		if err != nil {
