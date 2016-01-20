@@ -315,8 +315,8 @@ func main() {
 		*/
 		//http://grokbase.com/t/gg/golang-nuts/13aprnjk7m/go-nuts-how-to-get-memory-from-c-and-cast-to-byte
 		//oop := ((*[1 << 30]byte)(unsafe.Pointer(&hdr)))[0:unsafe.Sizeof(hdr)]
-
-		//TODO check source here src/syscall/syscall_linux.go from Golang source
+		//Check source here src/syscall/syscall_linux.go from Golang source, don't need syscall.Msghdr anymore.
+		//Read it directly.
 
 		n, oobn, flags, addr, err := tproxyUdp.ReadMsgUDP(b1, ctl)
 		if err != nil {
@@ -325,8 +325,6 @@ func main() {
 		}
 
 		fmt.Println(" result ", n, oobn, flags, addr)
-
-		//TODO why the oobn is 0???
 
 		//http://lxr.free-electrons.com/source/include/linux/socket.h#L102
 		ctrlMsgs, err := syscall.ParseSocketControlMessage(ctl[:oobn])
@@ -346,7 +344,6 @@ func main() {
 
 				//fmt.Println("inet4=", inet4.Addr, inet4.Port)
 
-				//little endian in my arm router
 				port := (int(msg.Data[2])<<8 + int(msg.Data[3]))
 				udpAddr := &net.UDPAddr{IP: net.IPv4(msg.Data[4], msg.Data[5], msg.Data[6], msg.Data[7]), Port: port}
 				fmt.Println("udpAddr=", udpAddr)
